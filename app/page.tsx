@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, Dumbbell,
   Crown, DoorOpen, Flame, Home, ImagePlus, Loader2, LogOut, Plus, Search, Trash2, UserRound, Users,
@@ -193,36 +193,45 @@ function GroupsView({ username, avatarUrl, avatarPositionX, avatarPositionY, cur
 
 function ProfileView({ profile, workoutCount, streak, groupCount, onChanged }: { profile: Profile; workoutCount: number; streak: number; groupCount: number; onChanged: () => Promise<void> }) {
   const [uploading, setUploading] = useState(false);
-  const [positionSaving, setPositionSaving] = useState(false);
-  const [positionX, setPositionX] = useState(profile.avatar_position_x ?? 50);
-  const [positionY, setPositionY] = useState(profile.avatar_position_y ?? 50);
   const [photoError, setPhotoError] = useState("");
-  useEffect(() => { setPositionX(profile.avatar_position_x ?? 50); setPositionY(profile.avatar_position_y ?? 50); }, [profile.avatar_position_x, profile.avatar_position_y]);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [cropPreview, setCropPreview] = useState("");
+  const [cropX, setCropX] = useState(50);
+  const [cropY, setCropY] = useState(50);
+  const dragRef = useRef<{ clientX: number; clientY: number; positionX: number; positionY: number; width: number; height: number } | null>(null);
   async function signOut() { await getSupabase()?.auth.signOut(); window.location.href = "/login"; }
-  async function changePhoto(file?: File) {
+  function closeCrop() {
+    if (cropFile && cropPreview) URL.revokeObjectURL(cropPreview);
+    setCropOpen(false); setCropFile(null); setCropPreview(""); dragRef.current = null;
+  }
+  function choosePhoto(file?: File) {
     if (!file) return;
     if (!file.type.startsWith("image/")) { setPhotoError("Choose an image file."); return; }
     if (file.size > 5 * 1024 * 1024) { setPhotoError("Profile pictures must be under 5 MB."); return; }
+    setPhotoError(""); setCropFile(file); setCropPreview(URL.createObjectURL(file)); setCropX(50); setCropY(50); setCropOpen(true);
+  }
+  function repositionPhoto() {
+    if (!profile.avatar_url) return;
+    setPhotoError(""); setCropFile(null); setCropPreview(profile.avatar_url); setCropX(profile.avatar_position_x ?? 50); setCropY(profile.avatar_position_y ?? 50); setCropOpen(true);
+  }
+  async function saveCrop() {
     const supabase = getSupabase(); if (!supabase) return;
     setUploading(true); setPhotoError("");
-    const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-    const path = `${profile.id}/${crypto.randomUUID()}.${extension}`;
-    const upload = await supabase.storage.from("avatars").upload(path, file, { contentType: file.type });
-    if (upload.error) { setUploading(false); setPhotoError(upload.error.message); return; }
-    const update = await supabase.from("profiles").update({ avatar_path: path, avatar_position_x: 50, avatar_position_y: 50 }).eq("id", profile.id);
-    if (update.error) { await supabase.storage.from("avatars").remove([path]); setUploading(false); setPhotoError(update.error.message); return; }
-    if (profile.avatar_path) await supabase.storage.from("avatars").remove([profile.avatar_path]);
-    setPositionX(50); setPositionY(50); await onChanged(); setUploading(false);
-  }
-  async function savePosition() {
-    const supabase = getSupabase(); if (!supabase) return;
-    setPositionSaving(true); setPhotoError("");
-    const { error } = await supabase.from("profiles").update({ avatar_position_x: positionX, avatar_position_y: positionY }).eq("id", profile.id);
-    if (error) { setPhotoError(error.message); setPositionSaving(false); return; }
-    await onChanged(); setPositionSaving(false);
+    let nextPath = profile.avatar_path;
+    if (cropFile) {
+      const extension = cropFile.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+      nextPath = `${profile.id}/${crypto.randomUUID()}.${extension}`;
+      const upload = await supabase.storage.from("avatars").upload(nextPath, cropFile, { contentType: cropFile.type });
+      if (upload.error) { setUploading(false); setPhotoError(upload.error.message); return; }
+    }
+    const update = await supabase.from("profiles").update({ avatar_path: nextPath, avatar_position_x: Math.round(cropX), avatar_position_y: Math.round(cropY) }).eq("id", profile.id);
+    if (update.error) { if (cropFile && nextPath) await supabase.storage.from("avatars").remove([nextPath]); setUploading(false); setPhotoError(update.error.message); return; }
+    if (cropFile && profile.avatar_path && profile.avatar_path !== nextPath) await supabase.storage.from("avatars").remove([profile.avatar_path]);
+    closeCrop(); await onChanged(); setUploading(false);
   }
   const memberSince = new Date(profile.created_at).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-  return <><Header eyebrow="Your profile" title={profile.username} username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} /><section className="rounded-[28px] border border-white/8 bg-panel p-6 text-center"><div className="relative mx-auto w-fit"><UserAvatar name={profile.username} avatarUrl={profile.avatar_url} positionX={positionX} positionY={positionY} large /><label htmlFor="profile-photo" className="absolute -bottom-1 -right-1 grid size-9 cursor-pointer place-items-center rounded-full border-4 border-panel bg-lime text-ink shadow-lg"><Camera className="size-4" /><input id="profile-photo" type="file" accept="image/*" className="sr-only" disabled={uploading} onChange={event => changePhoto(event.target.files?.[0])} /></label></div><button onClick={() => document.getElementById("profile-photo")?.click()} disabled={uploading} className="mt-4 text-sm font-bold text-lime">{uploading ? "Uploading..." : profile.avatar_path ? "Change profile picture" : "Add profile picture"}</button>{profile.avatar_path && <div className="mx-auto mt-5 max-w-sm rounded-2xl bg-white/[.035] p-4 text-left"><p className="mb-4 text-sm font-extrabold">Position your picture</p><label className="block text-xs font-semibold text-white/45">Horizontal position<input type="range" min="0" max="100" value={positionX} onChange={event => setPositionX(Number(event.target.value))} className="mt-2 w-full accent-lime" /></label><label className="mt-4 block text-xs font-semibold text-white/45">Vertical position<input type="range" min="0" max="100" value={positionY} onChange={event => setPositionY(Number(event.target.value))} className="mt-2 w-full accent-lime" /></label><Button onClick={savePosition} disabled={positionSaving} className="mt-4 h-10 w-full rounded-xl bg-lime font-black text-ink hover:bg-[#d6ff6a]">{positionSaving && <Loader2 className="animate-spin" />}Save position</Button></div>}{photoError && <p className="mx-auto mt-3 max-w-sm rounded-xl bg-red-400/10 p-3 text-sm text-red-200">{photoError}</p>}<h2 className="mt-4 text-2xl font-black">@{profile.username}</h2><p className="mt-1 text-sm text-white/40">Member since {memberSince}</p><div className="mt-6 grid grid-cols-3 divide-x divide-white/8 rounded-2xl bg-white/[.035] py-4"><div><p className="text-2xl font-black">{workoutCount}</p><p className="text-xs text-white/40">this year</p></div><div><p className="text-2xl font-black">{streak}</p><p className="text-xs text-white/40">day streak</p></div><div><p className="text-2xl font-black">{groupCount}</p><p className="text-xs text-white/40">groups</p></div></div></section><button onClick={signOut} className="mt-5 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-panel p-4 text-left font-bold text-white/65"><span className="grid size-9 place-items-center rounded-xl bg-white/6"><LogOut className="size-4" /></span>Log out</button></>;
+  return <><Header eyebrow="Your profile" title={profile.username} username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} /><section className="rounded-[28px] border border-white/8 bg-panel p-6 text-center"><div className="relative mx-auto w-fit"><UserAvatar name={profile.username} avatarUrl={profile.avatar_url} positionX={profile.avatar_position_x} positionY={profile.avatar_position_y} large /><label htmlFor="profile-photo" className="absolute -bottom-1 -right-1 grid size-9 cursor-pointer place-items-center rounded-full border-4 border-panel bg-lime text-ink shadow-lg"><Camera className="size-4" /><input id="profile-photo" type="file" accept="image/*" className="sr-only" disabled={uploading} onChange={event => { choosePhoto(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label></div><div className="mt-4 flex justify-center gap-4"><button onClick={() => document.getElementById("profile-photo")?.click()} disabled={uploading} className="text-sm font-bold text-lime">{profile.avatar_path ? "Change picture" : "Add profile picture"}</button>{profile.avatar_path && <button onClick={repositionPhoto} disabled={uploading} className="text-sm font-bold text-white/55">Reposition</button>}</div>{photoError && <p className="mx-auto mt-3 max-w-sm rounded-xl bg-red-400/10 p-3 text-sm text-red-200">{photoError}</p>}<h2 className="mt-4 text-2xl font-black">@{profile.username}</h2><p className="mt-1 text-sm text-white/40">Member since {memberSince}</p><div className="mt-6 grid grid-cols-3 divide-x divide-white/8 rounded-2xl bg-white/[.035] py-4"><div><p className="text-2xl font-black">{workoutCount}</p><p className="text-xs text-white/40">this year</p></div><div><p className="text-2xl font-black">{streak}</p><p className="text-xs text-white/40">day streak</p></div><div><p className="text-2xl font-black">{groupCount}</p><p className="text-xs text-white/40">groups</p></div></div></section><button onClick={signOut} className="mt-5 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-panel p-4 text-left font-bold text-white/65"><span className="grid size-9 place-items-center rounded-xl bg-white/6"><LogOut className="size-4" /></span>Log out</button><Dialog open={cropOpen} onOpenChange={open => { if (!open && !uploading) closeCrop(); }}><DialogContent className="rounded-[26px] border-white/10 bg-[#181e19] p-5 text-white sm:p-6"><DialogHeader><DialogTitle className="text-2xl font-black">Position your picture</DialogTitle><DialogDescription className="text-white/42">Drag the photo until it looks right inside the circle.</DialogDescription></DialogHeader><div className="flex justify-center py-4"><div className="relative size-[260px] touch-none cursor-grab overflow-hidden rounded-full border-4 border-lime/70 bg-black active:cursor-grabbing" onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); dragRef.current = { clientX: event.clientX, clientY: event.clientY, positionX: cropX, positionY: cropY, width: event.currentTarget.clientWidth, height: event.currentTarget.clientHeight }; }} onPointerMove={event => { const drag = dragRef.current; if (!drag) return; setCropX(Math.max(0, Math.min(100, drag.positionX - ((event.clientX - drag.clientX) / drag.width) * 100))); setCropY(Math.max(0, Math.min(100, drag.positionY - ((event.clientY - drag.clientY) / drag.height) * 100))); }} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}>{cropPreview && <img src={cropPreview} alt="Profile crop preview" draggable={false} className="pointer-events-none size-full select-none object-cover" style={{ objectPosition: `${cropX}% ${cropY}%` }} />}<div className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-inset ring-white/30" /></div></div><div className="grid grid-cols-2 gap-2"><Button onClick={closeCrop} disabled={uploading} variant="outline" className="h-11 rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white">Cancel</Button><Button onClick={saveCrop} disabled={uploading} className="h-11 rounded-xl bg-lime font-black text-ink hover:bg-[#d6ff6a]">{uploading && <Loader2 className="animate-spin" />}Save picture</Button></div></DialogContent></Dialog></>;
 }
 
 function LogDialog({ open, onOpenChange, onLogged }: { open: boolean; onOpenChange: (open: boolean) => void; onLogged: () => Promise<void> }) {
