@@ -1,4 +1,4 @@
-# Quota
+# Lift It
 
 A phone-first workout accountability app. Every Gym, Cardio, or Sports log counts as one workout toward every group the user belongs to. Logs require one proof photo and can only be added for today or yesterday.
 
