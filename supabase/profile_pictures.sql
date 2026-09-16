@@ -1,5 +1,11 @@
 -- Run once in the Supabase SQL Editor to enable profile-picture uploads.
 
+alter table public.profiles
+  add column if not exists avatar_position_x smallint not null default 50
+    check (avatar_position_x between 0 and 100),
+  add column if not exists avatar_position_y smallint not null default 50
+    check (avatar_position_y between 0 and 100);
+
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('avatars', 'avatars', false, 5242880)
 on conflict (id) do update set file_size_limit = excluded.file_size_limit;
