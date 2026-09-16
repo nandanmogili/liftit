@@ -4,7 +4,9 @@ alter table public.profiles
   add column if not exists avatar_position_x smallint not null default 50
     check (avatar_position_x between 0 and 100),
   add column if not exists avatar_position_y smallint not null default 50
-    check (avatar_position_y between 0 and 100);
+    check (avatar_position_y between 0 and 100),
+  add column if not exists avatar_zoom smallint not null default 100
+    check (avatar_zoom between 100 and 300);
 
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('avatars', 'avatars', false, 5242880)
