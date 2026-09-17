@@ -18,6 +18,7 @@ type View = "home" | "calendar" | "groups" | "profile";
 type WorkoutType = "Gym" | "Cardio" | "Sports";
 type Profile = { id: string; username: string; avatar_path: string | null; avatar_position_x: number; avatar_position_y: number; avatar_zoom: number; created_at: string; avatar_url?: string };
 type Workout = { id: string; user_id: string; workout_type: WorkoutType; workout_date: string; note: string; proof_path: string; created_at: string; proof_url?: string };
+type Reaction = { workout_id: string; user_id: string; emoji: "❤️" | "🔥" | "💪" | "👏"; created_at: string };
 type Group = { id: string; owner_id: string; name: string; description: string; image_path: string | null; weekly_quota: number; invite_code: string; created_at: string };
 type Membership = { group_id: string; user_id: string; role: "owner" | "member"; joined_at: string };
 type MemberProgress = { profile: Profile; role: string; count: number };
@@ -37,6 +38,31 @@ const relativeTime = (iso: string) => {
   if (hours < 24) return `${hours} hr ago`;
   return `${Math.floor(hours / 24)}d ago`;
 };
+
+async function compressWorkoutPhoto(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = sourceUrl;
+    await image.decode();
+    const longestSide = Math.max(image.naturalWidth, image.naturalHeight);
+    const scale = Math.min(1, 1920 / longestSide);
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(image, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob || (scale === 1 && blob.size >= file.size)) return file;
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "workout-proof";
+    return new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
 
 async function addAvatarUrls(items: Profile[]) {
   const supabase = getSupabase();
@@ -82,8 +108,15 @@ function EmptyState({ icon: Icon, title, detail, action, onAction }: { icon: typ
   return <div className="rounded-[24px] border border-dashed border-white/14 bg-white/[.025] px-5 py-10 text-center"><span className="mx-auto grid size-12 place-items-center rounded-2xl bg-white/6 text-white/45"><Icon className="size-5" /></span><h3 className="mt-4 font-extrabold">{title}</h3><p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-white/42">{detail}</p>{action && <Button onClick={onAction} className="mt-5 rounded-xl bg-lime font-bold text-ink hover:bg-[#d6ff6a]">{action}</Button>}</div>;
 }
 
-function HomeView({ username, avatarUrl, avatarPositionX, avatarPositionY, avatarZoom, currentUserId, workouts, groups, feed, profiles, onGroups, onDeleted }: { username: string; avatarUrl?: string; avatarPositionX?: number; avatarPositionY?: number; avatarZoom?: number; currentUserId: string; workouts: Workout[]; groups: Group[]; feed: Workout[]; profiles: Map<string, Profile>; onGroups: () => void; onDeleted: () => Promise<void> }) {
+function WorkoutReactions({ workoutId, reactions, currentUserId, busy, onToggle }: { workoutId: string; reactions: Reaction[]; currentUserId: string; busy: boolean; onToggle: (emoji: Reaction["emoji"]) => void }) {
+  const emojis: Reaction["emoji"][] = ["🔥", "💪", "👏", "❤️"];
+  const workoutReactions = reactions.filter(reaction => reaction.workout_id === workoutId);
+  return <div className="flex flex-wrap gap-1.5 border-t border-white/6 px-3.5 py-3 sm:px-4">{emojis.map(emoji => { const count = workoutReactions.filter(reaction => reaction.emoji === emoji).length; const selected = workoutReactions.some(reaction => reaction.user_id === currentUserId && reaction.emoji === emoji); return <button key={emoji} onClick={() => onToggle(emoji)} disabled={busy} aria-label={`${selected ? "Remove" : "Add"} ${emoji} reaction`} className={cn("flex h-8 min-w-10 items-center justify-center gap-1 rounded-full border px-2.5 text-sm transition disabled:opacity-45", selected ? "border-lime/45 bg-lime/12 text-white" : "border-white/8 bg-white/[.035] text-white/65 hover:bg-white/8")}><span>{emoji}</span>{count > 0 && <span className="text-xs font-bold">{count}</span>}</button>; })}</div>;
+}
+
+function HomeView({ username, avatarUrl, avatarPositionX, avatarPositionY, avatarZoom, currentUserId, workouts, groups, feed, profiles, reactions, onGroups, onDeleted, onReactionChanged }: { username: string; avatarUrl?: string; avatarPositionX?: number; avatarPositionY?: number; avatarZoom?: number; currentUserId: string; workouts: Workout[]; groups: Group[]; feed: Workout[]; profiles: Map<string, Profile>; reactions: Reaction[]; onGroups: () => void; onDeleted: () => Promise<void>; onReactionChanged: () => Promise<void> }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reactingId, setReactingId] = useState<string | null>(null);
   const start = dateKey(weekStart());
   const weeklyCount = workouts.filter(workout => workout.workout_date >= start).length;
   const quota = groups.length ? Math.max(...groups.map(group => group.weekly_quota)) : null;
@@ -98,9 +131,26 @@ function HomeView({ username, avatarUrl, avatarPositionX, avatarPositionY, avata
     await supabase.storage.from("proof-photos").remove([workout.proof_path]);
     await onDeleted(); setDeletingId(null);
   }
+  async function toggleReaction(workoutId: string, emoji: Reaction["emoji"]) {
+    if (reactingId) return;
+    const supabase = getSupabase(); if (!supabase) return;
+    setReactingId(workoutId);
+    const existing = reactions.find(reaction => reaction.workout_id === workoutId && reaction.user_id === currentUserId);
+    if (existing) {
+      const removed = await supabase.from("reactions").delete().eq("workout_id", workoutId).eq("user_id", currentUserId);
+      if (removed.error) { setReactingId(null); window.alert(removed.error.message); return; }
+      if (existing.emoji === emoji) { await onReactionChanged(); setReactingId(null); return; }
+    }
+    const added = await supabase.from("reactions").insert({ workout_id: workoutId, user_id: currentUserId, emoji });
+    if (added.error) { setReactingId(null); window.alert(added.error.message); return; }
+    await onReactionChanged(); setReactingId(null);
+  }
   return <><Header eyebrow={friendlyDate()} title={`Hey, ${username}`} username={username} avatarUrl={avatarUrl} avatarPositionX={avatarPositionX} avatarPositionY={avatarPositionY} avatarZoom={avatarZoom} /><section className="hero-card relative overflow-hidden rounded-[28px] border border-white/10 p-5 sm:p-7"><div className="relative z-10 flex items-end justify-between gap-5"><div><p className="text-sm font-semibold text-white/55">This week</p><div className="mt-2 flex items-baseline gap-2"><span className="text-6xl font-black tracking-[-.075em]">{weeklyCount}</span><span className="text-2xl font-bold text-white/30">{quota ? `/ ${quota}` : "workouts"}</span></div>{streak > 0 && <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-lime/12 px-3 py-1.5 text-sm font-bold text-lime"><Flame className="size-4 fill-lime" />{streak} day streak</div>}</div>
 <div className="relative grid size-[112px] shrink-0 place-items-center sm:size-[132px]"><svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,.10)" strokeWidth="10" /><circle cx="60" cy="60" r="52" fill="none" stroke="#caff4a" strokeWidth="10" pathLength="100" strokeDasharray="100" strokeDashoffset={100 - percent} strokeLinecap="round" className="transition-[stroke-dashoffset] duration-500" /></svg><div className="relative text-center"><span className="block text-2xl font-black">{quota ? `${percent}%` : "—"}</span><span className="text-xs text-white/45">{quota ? "complete" : "no quota"}</span></div></div></div>
-<p className="relative z-10 mt-5 text-sm text-white/52">{quota ? weeklyCount >= quota ? "You hit your highest group quota this week." : `${quota - weeklyCount} workout${quota - weeklyCount === 1 ? "" : "s"} to hit your highest group quota.` : "Join or create a group to set your weekly quota."}</p></section><section className="mt-8"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-extrabold tracking-tight">Group activity</h2></div>{groups.length === 0 ? <EmptyState icon={Users} title="No group activity yet" detail="Create or join a group to see your friends’ real workout posts here." action="Find or create a group" onAction={onGroups} /> : feed.length === 0 ? <EmptyState icon={Activity} title="Quiet week so far" detail="Nobody in your groups has logged a workout this week yet." /> : <div className="space-y-3">{feed.map(workout => { const author = profiles.get(workout.user_id); return <article key={workout.id} className="mx-1 max-w-[600px] overflow-hidden rounded-[20px] border border-white/8 bg-panel sm:mx-auto"><div className="flex gap-3 p-3.5 sm:p-4"><UserAvatar name={author?.username ?? "Member"} avatarUrl={author?.avatar_url} positionX={author?.avatar_position_x} positionY={author?.avatar_position_y} zoom={author?.avatar_zoom} /><div className="flex-1"><p className="font-bold">{author?.username ?? "Member"} logged {workout.workout_type}</p><p className="mt-0.5 text-xs text-white/42">{relativeTime(workout.created_at)}</p></div>{workout.user_id === currentUserId && <button onClick={() => deleteWorkout(workout)} disabled={deletingId === workout.id} aria-label="Delete workout" className="grid size-9 shrink-0 place-items-center rounded-xl text-white/35 transition hover:bg-red-400/10 hover:text-red-300">{deletingId === workout.id ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}</button>}</div>{workout.proof_url && <div className="relative mx-3 overflow-hidden rounded-xl bg-black/35 sm:mx-4"><img src={workout.proof_url} alt="" aria-hidden="true" className="absolute inset-0 size-full scale-110 object-cover opacity-25 blur-2xl" /><img src={workout.proof_url} alt={`${workout.workout_type} proof`} className="relative mx-auto block max-h-[420px] max-w-full object-contain sm:max-h-[520px]" /></div>}{workout.note && <p className="px-3.5 py-3 text-sm text-white/55 sm:px-4">{workout.note}</p>}</article>; })}</div>}</section></>;
+<p className="relative z-10 mt-5 text-sm text-white/52">{quota ? weeklyCount >= quota ? "You hit your highest group quota this week." : `${quota - weeklyCount} workout${quota - weeklyCount === 1 ? "" : "s"} to hit your highest group quota.` : "Join or create a group to set your weekly quota."}</p></section><section className="mt-8"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-extrabold tracking-tight">Group activity</h2></div>{groups.length === 0 ? <EmptyState icon={Users} title="No group activity yet" detail="Create or join a group to see your friends’ real workout posts here." action="Find or create a group" onAction={onGroups} /> : feed.length === 0 ? <EmptyState icon={Activity} title="Quiet week so far" detail="Nobody in your groups has logged a workout this week yet." /> : <div className="space-y-3">{feed.map(workout => { const author = profiles.get(workout.user_id); return <article key={workout.id} className="mx-1 max-w-[600px] overflow-hidden rounded-[20px] border border-white/8 bg-panel sm:mx-auto"><div className="flex gap-3 p-3.5 sm:p-4"><UserAvatar name={author?.username ?? "Member"} avatarUrl={author?.avatar_url} positionX={author?.avatar_position_x} positionY={author?.avatar_position_y} zoom={author?.avatar_zoom} /><div className="flex-1"><p className="font-bold">{author?.username ?? "Member"} logged {workout.workout_type}</p><p className="mt-0.5 text-xs text-white/42">{relativeTime(workout.created_at)}</p></div>{workout.user_id === currentUserId && <button onClick={() => deleteWorkout(workout)} disabled={deletingId === workout.id} aria-label="Delete workout" className="grid size-9 shrink-0 place-items-center rounded-xl text-white/35 transition hover:bg-red-400/10 hover:text-red-300">{deletingId === workout.id ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}</button>}</div>{workout.proof_url && <div className="relative mx-3 overflow-hidden rounded-xl bg-black/35 sm:mx-4"><img src={workout.proof_url} alt="" aria-hidden="true" className="absolute inset-0 size-full scale-110 object-cover opacity-25 blur-2xl" /><img src={workout.proof_url} alt={`${workout.workout_type} proof`} className="relative mx-auto block max-h-[420px] max-w-full object-contain sm:max-h-[520px]" /></div>}
+{workout.note && <p className="px-3.5 py-3 text-sm text-white/55 sm:px-4">{workout.note}</p>}
+<WorkoutReactions workoutId={workout.id} reactions={reactions} currentUserId={currentUserId} busy={reactingId === workout.id} onToggle={emoji => toggleReaction(workout.id, emoji)} />
+</article>; })}</div>}</section></>;
 }
 
 function CalendarView({ username, avatarUrl, avatarPositionX, avatarPositionY, avatarZoom, workouts }: { username: string; avatarUrl?: string; avatarPositionX?: number; avatarPositionY?: number; avatarZoom?: number; workouts: Workout[] }) {
@@ -316,7 +366,35 @@ function ProfileView({ profile, workoutCount, streak, groupCount, onChanged }: {
 
 function LogDialog({ open, onOpenChange, onLogged }: { open: boolean; onOpenChange: (open: boolean) => void; onLogged: () => Promise<void> }) {
   const [type, setType] = useState<WorkoutType>("Gym"); const [photo, setPhoto] = useState<File | null>(null); const [date, setDate] = useState(dateKey(new Date())); const [note, setNote] = useState(""); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
-  async function submit() { if (!photo) return; setSaving(true); setError(""); const supabase = getSupabase(); if (!supabase) return; const { data: { user } } = await supabase.auth.getUser(); if (!user) { setSaving(false); setError("Please log in again."); return; } const path = `${user.id}/${crypto.randomUUID()}-${photo.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`; const upload = await supabase.storage.from("proof-photos").upload(path, photo); if (upload.error) { setSaving(false); setError(upload.error.message); return; } const insert = await supabase.from("workouts").insert({ user_id: user.id, workout_type: type, workout_date: date, note, proof_path: path }); if (insert.error) { await supabase.storage.from("proof-photos").remove([path]); setSaving(false); setError(insert.error.message); return; } await onLogged(); setSaving(false); setPhoto(null); setNote(""); onOpenChange(false); }
+  async function submit() { if (!photo) return;
+setSaving(true);
+setError("");
+const supabase = getSupabase();
+if (!supabase) { setSaving(false); return; }
+const { data: { user } } = await supabase.auth.getUser();
+if (!user) { setSaving(false);
+setError("Please log in again.");
+return;
+}
+let preparedPhoto: File;
+try { preparedPhoto = await compressWorkoutPhoto(photo); }
+catch (compressionError) { setSaving(false); setError(compressionError instanceof Error ? compressionError.message : "Could not prepare that photo."); return; }
+const path = `${user.id}/${crypto.randomUUID()}-${preparedPhoto.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
+const upload = await supabase.storage.from("proof-photos").upload(path, preparedPhoto, { contentType: preparedPhoto.type, cacheControl: "3600" });
+if (upload.error) { setSaving(false);
+setError(upload.error.message);
+return;
+} const insert = await supabase.from("workouts").insert({ user_id: user.id, workout_type: type, workout_date: date, note, proof_path: path });
+if (insert.error) { await supabase.storage.from("proof-photos").remove([path]);
+setSaving(false);
+setError(insert.error.message);
+return;
+} await onLogged();
+setSaving(false);
+setPhoto(null);
+setNote("");
+onOpenChange(false);
+}
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto rounded-[26px] border-white/10 bg-[#181e19] p-5 text-white sm:p-6"><DialogHeader><DialogTitle className="text-2xl font-black">Log a workout</DialogTitle><DialogDescription className="text-white/42">Every valid workout counts as 1 in all your groups.</DialogDescription></DialogHeader><div className="mt-2 space-y-5"><fieldset><legend className="mb-2.5 text-sm font-bold">Workout type</legend><div className="grid grid-cols-3 gap-2">{(["Gym", "Cardio", "Sports"] as WorkoutType[]).map(item => <button key={item} onClick={() => setType(item)} className={cn("rounded-xl border px-2 py-3 text-sm font-bold", type === item ? "border-lime bg-lime text-ink" : "border-white/10 bg-white/4 text-white/55")}>{item}</button>)}</div></fieldset><div><label htmlFor="date" className="mb-2 block text-sm font-bold">Date</label><Input id="date" type="date" min={dateKey(addDays(new Date(), -1))} max={dateKey(new Date())} value={date} onChange={event => setDate(event.target.value)} className="h-12 border-white/10 bg-white/5 text-white [color-scheme:dark]" /></div><div><label htmlFor="proof" className="mb-2 block text-sm font-bold">Proof photo</label><label htmlFor="proof" className={cn("flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed", photo ? "border-lime bg-lime/8 text-lime" : "border-white/18 bg-white/[.025] text-white/44")}><ImagePlus className="size-5" /><span className="max-w-[85%] truncate text-sm font-bold">{photo?.name || "Take or choose a photo"}</span>
 <input id="proof" type="file" accept="image/*" className="sr-only" onChange={event => setPhoto(event.target.files?.[0] ?? null)} />
 </label></div><div><label htmlFor="note" className="mb-2 block text-sm font-bold">Note <span className="font-normal text-white/35">optional</span></label><Textarea id="note" value={note} onChange={event => setNote(event.target.value)} maxLength={280} className="min-h-20 resize-none border-white/10 bg-white/5" /></div>{error && <p className="rounded-xl bg-red-400/10 p-3 text-sm text-red-200">{error}</p>}<Button onClick={submit} disabled={!photo || saving} className="h-12 w-full rounded-xl bg-lime text-base font-black text-ink hover:bg-[#d6ff6a]">{saving ? <Loader2 className="animate-spin" /> : <Activity className="size-5" />}Log {type}</Button></div></DialogContent></Dialog>;
@@ -330,7 +408,20 @@ function GroupDialog({ open, onOpenChange, discoverGroups, onChanged }: { open: 
 }
 
 export default function LiftItApp() {
-  const [view, setView] = useState<View>("home"); const [profile, setProfile] = useState<Profile | null>(null); const [workouts, setWorkouts] = useState<Workout[]>([]); const [groups, setGroups] = useState<Group[]>([]); const [memberships, setMemberships] = useState<Membership[]>([]); const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map()); const [feed, setFeed] = useState<Workout[]>([]); const [groupWorkouts, setGroupWorkouts] = useState<Workout[]>([]); const [discoverGroups, setDiscoverGroups] = useState<Group[]>([]); const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [logOpen, setLogOpen] = useState(false); const [groupOpen, setGroupOpen] = useState(false);
+  const [view, setView] = useState<View>("home");
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map());
+  const [feed, setFeed] = useState<Workout[]>([]);
+  const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [groupWorkouts, setGroupWorkouts] = useState<Workout[]>([]);
+  const [discoverGroups, setDiscoverGroups] = useState<Group[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [logOpen, setLogOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
 
   const refresh = useCallback(async (preferredGroupId?: string) => {
     if (!isSupabaseConfigured()) { window.location.href = "/login"; return; }
@@ -349,7 +440,7 @@ export default function LiftItApp() {
     ]);
     setWorkouts((ownWorkouts ?? []) as Workout[]); setDiscoverGroups((searchable ?? []) as Group[]);
     const ownMembershipRows = (myMemberships ?? []) as Membership[]; const groupIds = ownMembershipRows.map(row => row.group_id); setMemberships(ownMembershipRows);
-    if (!groupIds.length) { setGroups([]); setFeed([]); setGroupWorkouts([]); setProfiles(new Map(ownProfile ? [[ownProfile.id, ownProfile]] : [])); setSelectedGroupId(null); setLoading(false); return; }
+    if (!groupIds.length) { setGroups([]); setFeed([]); setReactions([]); setGroupWorkouts([]); setProfiles(new Map(ownProfile ? [[ownProfile.id, ownProfile]] : [])); setSelectedGroupId(null); setLoading(false); return; }
     const [{ data: groupRows }, { data: allMemberships }, { data: visibleWorkouts }] = await Promise.all([
       supabase.from("groups").select("id,owner_id,name,description,image_path,weekly_quota,invite_code,created_at").in("id", groupIds),
       supabase.from("group_members").select("*").in("group_id", groupIds),
@@ -362,6 +453,9 @@ export default function LiftItApp() {
     const memberSet = new Set(memberIds); const week = dateKey(weekStart()); const visible = ((visibleWorkouts ?? []) as Workout[]).filter(workout => memberSet.has(workout.user_id)); setGroupWorkouts(visible);
     const recent = visible.filter(workout => workout.workout_date >= week).slice(0, 20); const paths = recent.map(workout => workout.proof_path);
     if (paths.length) { const { data: signed } = await supabase.storage.from("proof-photos").createSignedUrls(paths, 3600); const urlMap = new Map((signed ?? []).map(item => [item.path, item.signedUrl ?? undefined])); recent.forEach(workout => { workout.proof_url = urlMap.get(workout.proof_path); }); }
+    const recentIds = recent.map(workout => workout.id);
+    if (recentIds.length) { const { data: reactionRows } = await supabase.from("reactions").select("*").in("workout_id", recentIds); setReactions((reactionRows ?? []) as Reaction[]); }
+    else setReactions([]);
     setFeed(recent); setSelectedGroupId(preferredGroupId && groupIds.includes(preferredGroupId) ? preferredGroupId : current => current && groupIds.includes(current) ? current : groupList[0]?.id ?? null); setLoading(false);
   }, []);
 
@@ -370,5 +464,9 @@ export default function LiftItApp() {
   const memberProgress = useMemo<MemberProgress[]>(() => { if (!selectedGroup) return []; const groupMembers = memberships.filter(row => row.group_id === selectedGroup.id); return groupMembers.map(row => ({ profile: profiles.get(row.user_id) ?? { id: row.user_id, username: "Member", avatar_path: null, avatar_position_x: 50, avatar_position_y: 50, avatar_zoom: 100, created_at: row.joined_at }, role: row.role, count: groupWorkouts.filter(workout => workout.user_id === row.user_id && workout.workout_date >= weeklyStart).length })).sort((a, b) => a.profile.username.localeCompare(b.profile.username)); }, [selectedGroup, memberships, profiles, groupWorkouts, weeklyStart]);
   if (loading || !profile) return <main className="grid min-h-screen place-items-center bg-ink text-lime"><Loader2 className="size-7 animate-spin" /></main>;
   const pageTitle = titleCase(view); const streak = calculateStreak(workouts).count;
-  return <main className="min-h-screen bg-ink text-white"><div className="mx-auto flex min-h-screen max-w-[1180px]"><DesktopNav view={view} setView={setView} onLog={() => setLogOpen(true)} groupCount={groups.length} /><div className="min-w-0 flex-1"><div className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-white/8 bg-ink/88 px-5 backdrop-blur-xl md:hidden"><Brand /><span className="text-xs font-bold uppercase tracking-[.13em] text-white/35">{pageTitle}</span></div><div className="mx-auto w-full max-w-[720px] px-4 pb-28 pt-7 sm:px-7 md:pb-16 md:pt-10">{view === "home" && <HomeView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} workouts={workouts} groups={groups} feed={feed} profiles={profiles} onGroups={() => setView("groups")} onDeleted={() => refresh(selectedGroupId ?? undefined)} />}{view === "calendar" && <CalendarView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} workouts={workouts} />}{view === "groups" && <GroupsView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} groups={groups} selectedId={selectedGroupId} setSelectedId={setSelectedGroupId} members={memberProgress} workouts={groupWorkouts} onManage={() => setGroupOpen(true)} onChanged={() => refresh()} />}{view === "profile" && <ProfileView profile={profile} workoutCount={workouts.length} streak={streak} groupCount={groups.length} onChanged={() => refresh(selectedGroupId ?? undefined)} />}</div></div></div><AppNav view={view} setView={setView} onLog={() => setLogOpen(true)} /><LogDialog open={logOpen} onOpenChange={setLogOpen} onLogged={() => refresh(selectedGroupId ?? undefined)} /><GroupDialog open={groupOpen} onOpenChange={setGroupOpen} discoverGroups={discoverGroups.filter(group => !groups.some(own => own.id === group.id))} onChanged={refresh} /></main>;
+  return <main className="min-h-screen bg-ink text-white"><div className="mx-auto flex min-h-screen max-w-[1180px]"><DesktopNav view={view} setView={setView} onLog={() => setLogOpen(true)} groupCount={groups.length} /><div className="min-w-0 flex-1"><div className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-white/8 bg-ink/88 px-5 backdrop-blur-xl md:hidden"><Brand /><span className="text-xs font-bold uppercase tracking-[.13em] text-white/35">{pageTitle}</span></div><div className="mx-auto w-full max-w-[720px] px-4 pb-28 pt-7 sm:px-7 md:pb-16 md:pt-10">
+{view === "home" && <HomeView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} workouts={workouts} groups={groups} feed={feed} profiles={profiles} reactions={reactions} onGroups={() => setView("groups")} onDeleted={() => refresh(selectedGroupId ?? undefined)} onReactionChanged={() => refresh(selectedGroupId ?? undefined)} />}
+{view === "calendar" && <CalendarView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} workouts={workouts} />}
+{view === "groups" && <GroupsView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} groups={groups} selectedId={selectedGroupId} setSelectedId={setSelectedGroupId} members={memberProgress} workouts={groupWorkouts} onManage={() => setGroupOpen(true)} onChanged={() => refresh()} />}
+{view === "profile" && <ProfileView profile={profile} workoutCount={workouts.length} streak={streak} groupCount={groups.length} onChanged={() => refresh(selectedGroupId ?? undefined)} />}</div></div></div><AppNav view={view} setView={setView} onLog={() => setLogOpen(true)} /><LogDialog open={logOpen} onOpenChange={setLogOpen} onLogged={() => refresh(selectedGroupId ?? undefined)} /><GroupDialog open={groupOpen} onOpenChange={setGroupOpen} discoverGroups={discoverGroups.filter(group => !groups.some(own => own.id === group.id))} onChanged={refresh} /></main>;
 }

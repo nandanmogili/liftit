@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "pnpm build"
+  "buildCommand": "pnpm build",
+  "crons": [
+    {
+      "path": "/api/cleanup-proof-photos",
+      "schedule": "0 8 * * 1"
+    }
+  ]
 }
