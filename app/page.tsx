@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, Dumbbell,
-  Crown, DoorOpen, Flame, Home, ImagePlus, Loader2, LogOut, Plus, Search, Trash2, UserMinus, UserRound, Users,
+  Copy, Crown, DoorOpen, Flame, Home, ImagePlus, Loader2, LogOut, Plus, RefreshCw, Search, Settings, Trash2, UserMinus, UserRound, Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -139,8 +139,62 @@ function CalendarView({ username, avatarUrl, avatarPositionX, avatarPositionY, a
   </>;
 }
 
+function GroupSettingsDialog({ group, open, onOpenChange, onChanged, onManageMembers }: { group: Group; open: boolean; onOpenChange: (open: boolean) => void; onChanged: () => Promise<void>; onManageMembers: () => void }) {
+  const [name, setName] = useState(group.name);
+  const [description, setDescription] = useState(group.description);
+  const [quota, setQuota] = useState(group.weekly_quota);
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [message, setMessage] = useState("");
+  const [isError, setIsError] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(group.name); setDescription(group.description); setQuota(group.weekly_quota); setPassword(""); setMessage(""); setIsError(false);
+  }, [open, group.id, group.name, group.description, group.weekly_quota]);
+
+  async function saveSettings() {
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName.length > 50) { setIsError(true); setMessage("Enter a group name between 1 and 50 characters."); return; }
+    if (quota < 1 || quota > 14) { setIsError(true); setMessage("Weekly quota must be between 1 and 14."); return; }
+    if (password && password.length < 4) { setIsError(true); setMessage("A new password must be at least 4 characters."); return; }
+    const supabase = getSupabase(); if (!supabase) return;
+    setSaving(true); setMessage("");
+    const { error } = await supabase.rpc("update_group_settings", { p_group_id: group.id, p_name: trimmedName, p_description: description.trim(), p_quota: quota, p_password: password || null });
+    if (error) { setSaving(false); setIsError(true); setMessage(error.message); return; }
+    await onChanged(); setSaving(false); setPassword(""); setIsError(false); setMessage("Group settings saved.");
+  }
+
+  async function copyInviteCode() {
+    try { await navigator.clipboard.writeText(group.invite_code); setIsError(false); setMessage("Invite code copied."); }
+    catch { setIsError(true); setMessage("Could not copy automatically. Press and hold the code to copy it."); }
+  }
+
+  async function regenerateInviteCode() {
+    if (!window.confirm("Regenerate the invite code? The current invite link and code will stop working.")) return;
+    const supabase = getSupabase(); if (!supabase) return;
+    setRegenerating(true); setMessage("");
+    const { error } = await supabase.rpc("regenerate_group_invite", { p_group_id: group.id });
+    if (error) { setRegenerating(false); setIsError(true); setMessage(error.message); return; }
+    await onChanged(); setRegenerating(false); setIsError(false); setMessage("A new invite code was generated.");
+  }
+
+  async function deleteGroup() {
+    if (!window.confirm(`Delete ${group.name}? This removes the group for every member. Personal workout history will not be deleted.`)) return;
+    const supabase = getSupabase(); if (!supabase) return;
+    setSaving(true); setMessage("");
+    const { error } = await supabase.from("groups").delete().eq("id", group.id);
+    if (error) { setSaving(false); setIsError(true); setMessage(error.message); return; }
+    onOpenChange(false); await onChanged();
+  }
+
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto rounded-[26px] border-white/10 bg-[#181e19] p-5 text-white sm:max-w-lg sm:p-6"><DialogHeader><DialogTitle className="flex items-center gap-2 text-2xl font-black"><Settings className="size-5 text-lime" />Group settings</DialogTitle><DialogDescription className="text-white/42">Only the group owner can make these changes.</DialogDescription></DialogHeader><div className="space-y-5"><div className="space-y-4 rounded-2xl border border-white/8 bg-white/[.025] p-4"><div><label htmlFor="settings-name" className="mb-2 block text-sm font-bold">Group name</label><Input id="settings-name" value={name} onChange={event => setName(event.target.value)} maxLength={50} className="h-11 border-white/10 bg-white/5" /></div><div><label htmlFor="settings-description" className="mb-2 block text-sm font-bold">Description</label><Textarea id="settings-description" value={description} onChange={event => setDescription(event.target.value)} maxLength={180} className="min-h-20 resize-none border-white/10 bg-white/5" /></div><div><label htmlFor="settings-quota" className="mb-2 block text-sm font-bold">Weekly quota</label><Input id="settings-quota" type="number" min={1} max={14} value={quota} onChange={event => setQuota(Number(event.target.value))} className="h-11 border-white/10 bg-white/5" /></div><div><label htmlFor="settings-password" className="mb-2 block text-sm font-bold">New group password <span className="font-normal text-white/35">optional</span></label><Input id="settings-password" type="password" value={password} onChange={event => setPassword(event.target.value)} minLength={4} placeholder="Leave blank to keep current password" className="h-11 border-white/10 bg-white/5" /></div><Button onClick={saveSettings} disabled={saving || regenerating} className="h-11 w-full rounded-xl bg-lime font-black text-ink hover:bg-[#d6ff6a]">{saving && <Loader2 className="animate-spin" />}Save changes</Button></div><div className="rounded-2xl border border-white/8 bg-white/[.025] p-4"><p className="font-extrabold">Invite code</p><p className="mt-1 text-xs text-white/40">Anyone with this code can join without the password.</p><div className="mt-3 flex items-center gap-2"><code className="min-w-0 flex-1 select-all truncate rounded-xl bg-black/20 px-3 py-2.5 text-sm font-bold tracking-wider text-lime">{group.invite_code}</code><Button onClick={copyInviteCode} variant="outline" size="icon" className="shrink-0 rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white" aria-label="Copy invite code"><Copy className="size-4" /></Button><Button onClick={regenerateInviteCode} disabled={regenerating || saving} variant="outline" size="icon" className="shrink-0 rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white" aria-label="Regenerate invite code">{regenerating ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}</Button></div></div><Button onClick={() => { onOpenChange(false); onManageMembers(); }} variant="outline" className="h-11 w-full rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"><Users className="size-4" />Manage members</Button>{message && <p className={cn("rounded-xl p-3 text-sm", isError ? "bg-red-400/10 text-red-200" : "bg-lime/10 text-lime")}>{message}</p>}<div className="rounded-2xl border border-red-400/15 bg-red-400/[.045] p-4"><p className="font-extrabold text-red-200">Danger zone</p><p className="mt-1 text-xs leading-5 text-white/40">Deleting the group removes it for everyone. Members keep their personal workout history.</p><Button onClick={deleteGroup} disabled={saving || regenerating} variant="outline" className="mt-3 h-10 w-full rounded-xl border-red-400/20 bg-red-400/8 text-red-200 hover:bg-red-400/15 hover:text-red-100"><Trash2 className="size-4" />Delete group</Button></div></div></DialogContent></Dialog>;
+}
+
 function GroupsView({ username, avatarUrl, avatarPositionX, avatarPositionY, avatarZoom, currentUserId, groups, selectedId, setSelectedId, members, workouts, onManage, onChanged }: { username: string; avatarUrl?: string; avatarPositionX?: number; avatarPositionY?: number; avatarZoom?: number; currentUserId: string; groups: Group[]; selectedId: string | null; setSelectedId: (id: string) => void; members: MemberProgress[]; workouts: Workout[]; onManage: () => void; onChanged: () => Promise<void> }) {
   const [membersOpen, setMembersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [section, setSection] = useState<"progress" | "stats">("progress");
   const [working, setWorking] = useState(false);
   const [kickingId, setKickingId] = useState<string | null>(null);
@@ -175,16 +229,6 @@ function GroupsView({ username, avatarUrl, avatarPositionX, avatarPositionY, ava
     await onChanged();
   }
 
-  async function deleteGroup() {
-    if (!isOwner || !window.confirm(`Delete ${selected.name}? This removes the group for every member. Personal workout history will not be deleted.`)) return;
-    const supabase = getSupabase(); if (!supabase) return;
-    setWorking(true); setActionError("");
-    const { error } = await supabase.from("groups").delete().eq("id", selected.id);
-    setWorking(false);
-    if (error) { setActionError(error.message); return; }
-    await onChanged();
-  }
-
   async function kickMember(member: MemberProgress) {
     if (!isOwner || member.role === "owner" || member.profile.id === currentUserId) return;
     if (!window.confirm(`Remove ${member.profile.username} from ${selected.name}? They can rejoin later with the group password or invite link.`)) return;
@@ -204,7 +248,7 @@ function GroupsView({ username, avatarUrl, avatarPositionX, avatarPositionY, ava
       <div className="mt-5 grid grid-cols-2 gap-2">
         <Button onClick={() => setMembersOpen(true)} variant="outline" className="rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"><Users className="size-4" />View members</Button>
         {isOwner
-          ? <Button onClick={deleteGroup} disabled={working} variant="outline" className="rounded-xl border-red-400/20 bg-red-400/8 text-red-200 hover:bg-red-400/15 hover:text-red-100">{working ? <Loader2 className="animate-spin" /> : <Trash2 className="size-4" />}Delete group</Button>
+          ? <Button onClick={() => setSettingsOpen(true)} variant="outline" className="rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"><Settings className="size-4" />Group settings</Button>
           : <Button onClick={leaveGroup} disabled={working} variant="outline" className="rounded-xl border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white">{working ? <Loader2 className="animate-spin" /> : <DoorOpen className="size-4" />}Leave group</Button>}
       </div>
       {actionError && <p className="mt-3 rounded-xl bg-red-400/10 p-3 text-sm text-red-200">{actionError}</p>}
@@ -226,6 +270,7 @@ function GroupsView({ username, avatarUrl, avatarPositionX, avatarPositionY, ava
         {actionError && <p className="mt-3 rounded-xl bg-red-400/10 p-3 text-sm text-red-200">{actionError}</p>}
       </DialogContent>
     </Dialog>
+    {isOwner && <GroupSettingsDialog group={selected} open={settingsOpen} onOpenChange={setSettingsOpen} onChanged={onChanged} onManageMembers={() => setMembersOpen(true)} />}
   </>;
 }
 
