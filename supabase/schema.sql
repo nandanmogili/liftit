@@ -46,7 +46,7 @@ create table public.workouts (
 create table public.reactions (
   workout_id uuid not null references public.workouts(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
-  emoji text not null check (emoji in ('❤️', '🔥', '💪', '👏')),
+  emoji text not null check (char_length(emoji) between 1 and 32),
   created_at timestamptz not null default now(),
   primary key (workout_id, user_id)
 );

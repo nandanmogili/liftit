@@ -18,7 +18,7 @@ type View = "home" | "calendar" | "groups" | "profile";
 type WorkoutType = "Gym" | "Cardio" | "Sports";
 type Profile = { id: string; username: string; avatar_path: string | null; avatar_position_x: number; avatar_position_y: number; avatar_zoom: number; created_at: string; avatar_url?: string };
 type Workout = { id: string; user_id: string; workout_type: WorkoutType; workout_date: string; note: string; proof_path: string; created_at: string; proof_url?: string };
-type Reaction = { workout_id: string; user_id: string; emoji: "❤️" | "🔥" | "💪" | "👏"; created_at: string };
+type Reaction = { workout_id: string; user_id: string; emoji: string; created_at: string };
 type Group = { id: string; owner_id: string; name: string; description: string; image_path: string | null; weekly_quota: number; invite_code: string; created_at: string };
 type Membership = { group_id: string; user_id: string; role: "owner" | "member"; joined_at: string };
 type MemberProgress = { profile: Profile; role: string; count: number };
@@ -126,10 +126,35 @@ function ReactionButton({ emoji, count, selected, busy, onToggle, onShowDetails 
   return <button type="button" onPointerDown={beginHold} onPointerMove={movePointer} onPointerUp={clearHold} onPointerCancel={clearHold} onPointerLeave={clearHold} onContextMenu={event => event.preventDefault()} onClick={() => { if (held.current) { held.current = false; return; } onToggle(); }} disabled={busy} aria-label={`${selected ? "Remove" : "Add"} ${emoji} reaction${count > 0 ? "; hold to see who reacted" : ""}`} className={cn("flex h-8 min-w-10 touch-manipulation select-none items-center justify-center gap-1 rounded-full border px-2.5 text-sm transition disabled:opacity-45", selected ? "border-lime/45 bg-lime/12 text-white" : "border-white/8 bg-white/[.035] text-white/65 hover:bg-white/8")}><span>{emoji}</span>{count > 0 && <span className="text-xs font-bold">{count}</span>}</button>;
 }
 
+const emojiChoices = [
+  "❤️", "😂", "😍", "🥰", "😘", "😭", "🥹", "😮", "😤", "😎", "🤩", "🥳",
+  "🔥", "💪", "👏", "🙌", "👍", "🫶", "🤝", "🙏", "🤯", "😈", "💀", "👀",
+  "🎉", "🏆", "🥇", "⭐", "✨", "💯", "✅", "🚀", "⚡", "💥", "🎯", "👑",
+  "🏋️", "🏃", "🚴", "🏊", "⚽", "🏀", "🏈", "🎾", "🥊", "🧘", "⛹️", "🤸",
+  "🍀", "🌟", "☀️", "🌈", "🍑", "🍎", "🥑", "🥤", "🎵", "🫡", "🤑", "🤡",
+];
+
+function normalizeEmoji(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const first = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(trimmed))[0]?.segment ?? "";
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u.test(first) ? first : "";
+}
+
 function WorkoutReactions({ workoutId, reactions, currentUserId, busy, onToggle, onShowDetails }: { workoutId: string; reactions: Reaction[]; currentUserId: string; busy: boolean; onToggle: (emoji: Reaction["emoji"]) => void; onShowDetails: (emoji: Reaction["emoji"]) => void }) {
-  const emojis: Reaction["emoji"][] = ["🔥", "💪", "👏", "❤️"];
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [customEmoji, setCustomEmoji] = useState("");
+  const [pickerError, setPickerError] = useState("");
+  const quickEmojis: Reaction["emoji"][] = ["🔥", "💪", "👏"];
   const workoutReactions = reactions.filter(reaction => reaction.workout_id === workoutId);
-  return <div className="flex flex-wrap gap-1.5 border-t border-white/6 px-3.5 py-3 sm:px-4">{emojis.map(emoji => { const count = workoutReactions.filter(reaction => reaction.emoji === emoji).length; const selected = workoutReactions.some(reaction => reaction.user_id === currentUserId && reaction.emoji === emoji); return <ReactionButton key={emoji} emoji={emoji} count={count} selected={selected} busy={busy} onToggle={() => onToggle(emoji)} onShowDetails={() => onShowDetails(emoji)} />; })}</div>;
+  const usedCustomEmojis = [...new Set(workoutReactions.map(reaction => reaction.emoji).filter(emoji => !quickEmojis.includes(emoji)))];
+  const visibleEmojis = [...quickEmojis, ...usedCustomEmojis];
+  function chooseEmoji(value: string) {
+    const emoji = normalizeEmoji(value);
+    if (!emoji) { setPickerError("Choose one emoji."); return; }
+    onToggle(emoji); setCustomEmoji(""); setPickerError(""); setPickerOpen(false);
+  }
+  return <><div className="flex flex-wrap gap-1.5 border-t border-white/6 px-3.5 py-3 sm:px-4">{visibleEmojis.map(emoji => { const count = workoutReactions.filter(reaction => reaction.emoji === emoji).length; const selected = workoutReactions.some(reaction => reaction.user_id === currentUserId && reaction.emoji === emoji); return <ReactionButton key={emoji} emoji={emoji} count={count} selected={selected} busy={busy} onToggle={() => onToggle(emoji)} onShowDetails={() => onShowDetails(emoji)} />; })}<button type="button" onClick={() => setPickerOpen(true)} disabled={busy} aria-label="Choose another emoji" className="grid size-8 place-items-center rounded-full border border-white/8 bg-white/[.035] text-lg font-medium text-white/55 transition hover:bg-white/8 hover:text-white disabled:opacity-45">+</button></div><Dialog open={pickerOpen} onOpenChange={open => { setPickerOpen(open); if (!open) { setCustomEmoji(""); setPickerError(""); } }}><DialogContent className="max-h-[88vh] overflow-y-auto rounded-[26px] border-white/10 bg-[#181e19] p-5 text-white sm:p-6"><DialogHeader><DialogTitle className="text-2xl font-black">Choose a reaction</DialogTitle><DialogDescription className="text-white/42">Pick an emoji or enter any emoji from your keyboard.</DialogDescription></DialogHeader><div className="mt-2 grid grid-cols-8 gap-1.5 sm:grid-cols-10">{emojiChoices.map(emoji => <button type="button" key={emoji} onClick={() => chooseEmoji(emoji)} className="grid aspect-square place-items-center rounded-xl bg-white/[.045] text-xl transition hover:scale-105 hover:bg-white/10" aria-label={`React with ${emoji}`}>{emoji}</button>)}</div><div className="mt-4 flex gap-2"><Input value={customEmoji} onChange={event => { setCustomEmoji(event.target.value); setPickerError(""); }} onKeyDown={event => { if (event.key === "Enter") chooseEmoji(customEmoji); }} maxLength={32} inputMode="text" placeholder="Type or paste any emoji" aria-label="Custom emoji" className="h-11 border-white/10 bg-white/5 text-lg" /><Button type="button" onClick={() => chooseEmoji(customEmoji)} disabled={!customEmoji.trim()} className="h-11 rounded-xl bg-lime px-5 font-black text-ink hover:bg-[#d6ff6a]">Use</Button></div>{pickerError && <p className="mt-2 text-sm text-red-300">{pickerError}</p>}</DialogContent></Dialog></>;
 }
 
 function HomeView({ username, avatarUrl, avatarPositionX, avatarPositionY, avatarZoom, currentUserId, workouts, groups, feed, profiles, reactions, onProfile, onGroups, onDeleted, onReactionChanged }: { username: string; avatarUrl?: string; avatarPositionX?: number; avatarPositionY?: number; avatarZoom?: number; currentUserId: string; workouts: Workout[]; groups: Group[]; feed: Workout[]; profiles: Map<string, Profile>; reactions: Reaction[]; onProfile: () => void; onGroups: () => void; onDeleted: () => Promise<void>; onReactionChanged: () => Promise<void> }) {
