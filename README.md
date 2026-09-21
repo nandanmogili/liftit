@@ -50,7 +50,7 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Completed progress bars turn gold and display a checkmark
 - Click a group member to view their public profile, role, streak, and workout totals
 - Group owners can edit the group name, description, password, quota, and invite code
-- Group owners can view and remove members or delete the group
+- Group owners can view and remove members or delete the group after typing its exact name to confirm
 - Regular members can leave a group without deleting their workout history
 
 ### Group statistics
