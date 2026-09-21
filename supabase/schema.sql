@@ -66,6 +66,7 @@ create table public.weight_entries (
 create table public.strength_profiles (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   unit text not null default 'lb' check (unit in ('lb', 'kg')),
+  body_weight_kg numeric(6,2) check (body_weight_kg between 20 and 500),
   incline_dumbbell_press numeric(7,2) check (incline_dumbbell_press > 0 and incline_dumbbell_press <= 1000),
   triceps_pushdown numeric(7,2) check (triceps_pushdown > 0 and triceps_pushdown <= 1000),
   overhead_press numeric(7,2) check (overhead_press > 0 and overhead_press <= 1000),

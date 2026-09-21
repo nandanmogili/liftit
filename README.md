@@ -83,7 +83,10 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Every field is optional and unfilled muscle regions remain gray
 - Benchmarks: incline dumbbell press, triceps pushdown, overhead press, incline curl, seated cable row, lat pulldown, leg extension, leg curl, hip thrust, calf raise, and cable crunch
 - All entries assume 3 sets of 8–10 reps, with pounds and kilograms supported
-- A front-and-back body diagram uses Needs Work, Developing, Balanced, Strong, and Dominant colors to estimate balance across the lifts entered
+- The latest Weight Tracker entry is used automatically; otherwise body weight can be entered inside Strength Tracking
+- Without a body weight, lift values still save but the diagram remains gray until comparison tiers can be calculated
+- A front-and-back body diagram uses Needs Work, Developing, Average, Strong, and Dominant colors to compare lifts with broad body-weight-based population benchmarks
+- Height, age, and training experience are not collected for strength scoring
 - Strength data is never shown in groups, public profiles, workouts, or the activity feed
 
 ### Privacy and cleanup
