@@ -65,6 +65,7 @@ create table public.weight_entries (
 create index workouts_user_date_idx on public.workouts(user_id, workout_date desc);
 create index group_members_user_idx on public.group_members(user_id);
 create index weight_entries_user_date_idx on public.weight_entries(user_id, logged_on desc);
+create unique index profiles_username_lower_unique on public.profiles(lower(username));
 
 create function public.handle_new_user() returns trigger language plpgsql security definer set search_path = '' as $$
 begin

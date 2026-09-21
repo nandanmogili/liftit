@@ -11,6 +11,8 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Email and password authentication through Supabase Auth
 - Username-based profiles with optional profile pictures
 - Interactive avatar cropping, repositioning, and zoom
+- Profile settings for changing to an available username or replacing the profile picture
+- Permanent account deletion protected by exact username confirmation
 - Persistent sessions and profile access from the avatar on every main screen
 - No email confirmation required in the current setup
 
@@ -148,6 +150,7 @@ For a new Supabase project, open the Supabase SQL Editor and run these files in 
 7. `supabase/custom_reactions.sql`
 8. `supabase/weight_tracking.sql`
 9. `supabase/eastern_week_cleanup.sql`
+10. `supabase/profile_settings.sql`
 
 The first file creates the core tables, types, triggers, indexes, storage bucket, and baseline policies. The remaining files apply the production features added after the original schema and are intended to be run once on an existing Lift It project.
 
@@ -240,6 +243,7 @@ pnpm lint     # Run ESLint
 
 ```text
 app/
+  api/account/               Authenticated permanent account deletion
   api/cleanup-proof-photos/  Protected weekly cleanup endpoint
   login/                     Login and signup screen
   page.tsx                   Main authenticated application
@@ -273,6 +277,7 @@ vercel.json                  Build and cron configuration
 - Group passwords are hashed in Postgres with `pgcrypto`; plaintext passwords are not stored.
 - Owner-only group mutations are implemented as security-definer database functions that verify `auth.uid()`.
 - Storage buckets are private and accessed with short-lived signed URLs.
+- Account deletion runs through an authenticated server route; the service-role key is never exposed to the browser.
 
 ## License
 
