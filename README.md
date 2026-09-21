@@ -63,6 +63,16 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Most common workout type
 - Number of members who reached the weekly quota
 
+### Optional weight tracking
+
+- Private, opt-in tracker located on the Profile page
+- One weigh-in per day with pounds or kilograms display
+- Add, edit, and delete personal entries without affecting workouts
+- 30-day, 3-month, and 1-year line graph views
+- Hold and drag across the graph on mobile to inspect an exact date and weight
+- Hover across the graph for the same inspection behavior on desktop
+- Weight data is never shown in groups, profiles viewed by others, or the activity feed
+
 ### Privacy and cleanup
 
 - Supabase Row Level Security protects profiles, groups, memberships, workouts, reactions, and storage access
@@ -135,6 +145,7 @@ For a new Supabase project, open the Supabase SQL Editor and run these files in 
 5. `supabase/reactions_and_cleanup.sql`
 6. `supabase/group_settings.sql`
 7. `supabase/custom_reactions.sql`
+8. `supabase/weight_tracking.sql`
 
 The first file creates the core tables, types, triggers, indexes, storage bucket, and baseline policies. The remaining files apply the production features added after the original schema and are intended to be run once on an existing Lift It project.
 
@@ -169,6 +180,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `groups` | Group owner, name, description, weekly quota, password hash, and invite code |
 | `group_members` | Group membership and owner/member role |
 | `reactions` | One emoji reaction per user per workout |
+| `weight_entries` | Private daily weight measurements stored in kilograms for unit-independent history |
 
 Most progress values are calculated from workout records rather than stored separately. This keeps the home totals, group rankings, calendar, streaks, and statistics synchronized when a workout is added or deleted.
 
@@ -246,6 +258,7 @@ vercel.json                  Build and cron configuration
 - Group owners cannot leave their group; deleting the group dissolves it.
 - Deleting a group never deletes members' personal workout records.
 - Each member can place one reaction on a workout and can switch or remove it.
+- Weight tracking is disabled by default and remains visible only to the account owner.
 
 ## Security notes
 
