@@ -32,6 +32,7 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Accurate circular weekly progress indicator
 - Current daily workout streak
 - Shared activity feed containing workouts from group members
+- One-time activity post when a member first reaches the Dominant tier for a benchmark lift
 - Three quick reactions plus a custom emoji picker
 - Long-press a reaction count to see who reacted
 
@@ -46,7 +47,7 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 ### Groups
 
 - Create or join searchable groups using a password or invite code
-- Maximum of three groups per user and ten members per group
+- Maximum of three groups per user and twenty members per group
 - Shared weekly quota from 1–14 workouts
 - Weekly progress sorted from most workouts to least, with alphabetical tie-breaking
 - Completed progress bars turn gold and display a checkmark
@@ -87,7 +88,7 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Without a body weight, lift values still save but the diagram remains gray until comparison tiers can be calculated
 - A front-and-back body diagram uses Needs Work, Developing, Average, Strong, and Dominant colors to compare lifts with broad body-weight-based population benchmarks
 - Height, age, and training experience are not collected for strength scoring
-- Strength data is never shown in groups, public profiles, workouts, or the activity feed
+- Strength entries and body weight remain private; only the lift name and Dominant achievement are announced to shared groups
 
 ### Privacy and cleanup
 
@@ -165,6 +166,7 @@ For a new Supabase project, open the Supabase SQL Editor and run these files in 
 9. `supabase/eastern_week_cleanup.sql`
 10. `supabase/profile_settings.sql`
 11. `supabase/strength_tracking.sql`
+12. `supabase/group_capacity_and_strength_achievements.sql`
 
 The first file creates the core tables, types, triggers, indexes, storage bucket, and baseline policies. The remaining files apply the production features added after the original schema and are intended to be run once on an existing Lift It project.
 

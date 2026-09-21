@@ -55,7 +55,7 @@ begin
   end if;
   if target.id is null then raise exception 'Group not found.'; end if;
   if exists(select 1 from group_members where group_id = target.id and user_id = auth.uid()) then return target.id; end if;
-  if (select count(*) from group_members where group_id = target.id) >= 10 then raise exception 'This group already has 10 members.'; end if;
+  if (select count(*) from group_members where group_id = target.id) >= 20 then raise exception 'This group already has 20 members.'; end if;
   if nullif(trim(coalesce(p_invite_code, '')), '') is null and (p_password is null or target.password_hash <> extensions.crypt(p_password, target.password_hash)) then raise exception 'Incorrect group password.'; end if;
 
   insert into group_members(group_id, user_id, role)

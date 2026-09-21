@@ -39,6 +39,13 @@ const tiers: Record<Tier, { label: string; color: string; text: string }> = {
 const blankValues = () => Object.fromEntries(lifts.map(lift => [lift.key, ""])) as Record<LiftKey, string>;
 const displayValue = (kilograms: number, unit: StrengthUnit) => unit === "lb" ? kilograms * poundsPerKilogram : kilograms;
 const storedKilograms = (value: number, unit: StrengthUnit) => unit === "lb" ? value / poundsPerKilogram : value;
+const easternWeekStartKey = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "numeric", day: "numeric" }).formatToParts(date);
+  const value = (type: "year" | "month" | "day") => Number(parts.find(part => part.type === type)?.value);
+  const easternDate = new Date(Date.UTC(value("year"), value("month") - 1, value("day")));
+  easternDate.setUTCDate(easternDate.getUTCDate() - ((easternDate.getUTCDay() + 6) % 7));
+  return easternDate.toISOString().slice(0, 10);
+};
 
 function BodyDiagram({ colors }: { colors: Partial<Record<MuscleKey, string>> }) {
   const fill = (muscle: MuscleKey) => colors[muscle] ?? "#3a413b";
@@ -138,7 +145,17 @@ export function StrengthTracker({ userId, initialEnabled = false, initialUnit = 
     setSaving(true); setError(""); setMessage("");
     const payload = Object.fromEntries(lifts.map(lift => { const numeric = Number(values[lift.key]); return [lift.key, values[lift.key] === "" ? null : Number(storedKilograms(numeric, unit).toFixed(2))]; }));
     const { error: saveError } = await supabase.from("strength_profiles").upsert({ user_id: userId, unit, body_weight_kg: comparisonWeightKg ? Number(comparisonWeightKg.toFixed(2)) : null, ...payload, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-    if (saveError) setError(saveError.message); else setMessage(entered.length ? comparisonWeightKg ? "Strength levels updated." : "Lifts saved. Add body weight whenever you want population tiers." : "Empty strength profile saved. Add a lift whenever you're ready.");
+    if (saveError) setError(saveError.message);
+    else {
+      const dominant = entered.filter(item => muscleTiers[item.muscle] === "dominant");
+      if (dominant.length) {
+        const achievementRows = dominant.map(item => ({ user_id: userId, lift_key: item.key, lift_label: item.label, lift_weight_kg: Number(item.kilograms.toFixed(2)), achieved_week: easternWeekStartKey() }));
+        const { error: achievementError } = await supabase.from("strength_achievements").upsert(achievementRows, { onConflict: "user_id,lift_key", ignoreDuplicates: true });
+        if (achievementError) setError(`Strength saved, but the achievement post could not be created: ${achievementError.message}`);
+      }
+      setMessage(entered.length ? comparisonWeightKg ? "Strength levels updated." : "Lifts saved. Add body weight whenever you want population tiers." : "Empty strength profile saved. Add a lift whenever you're ready.");
+      await onProfileChanged();
+    }
     setSaving(false);
   }
 

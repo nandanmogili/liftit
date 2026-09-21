@@ -81,9 +81,21 @@ create table public.strength_profiles (
   updated_at timestamptz not null default now()
 );
 
+create table public.strength_achievements (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  lift_key text not null,
+  lift_label text not null,
+  lift_weight_kg numeric(7,2) not null check (lift_weight_kg > 0 and lift_weight_kg <= 1000),
+  achieved_week date not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, lift_key)
+);
+
 create index workouts_user_date_idx on public.workouts(user_id, workout_date desc);
 create index group_members_user_idx on public.group_members(user_id);
 create index weight_entries_user_date_idx on public.weight_entries(user_id, logged_on desc);
+create index strength_achievements_week_idx on public.strength_achievements(achieved_week desc, created_at desc);
 create unique index profiles_username_lower_unique on public.profiles(lower(username));
 
 create function public.handle_new_user() returns trigger language plpgsql security definer set search_path = '' as $$
@@ -115,6 +127,7 @@ alter table public.workouts enable row level security;
 alter table public.reactions enable row level security;
 alter table public.weight_entries enable row level security;
 alter table public.strength_profiles enable row level security;
+alter table public.strength_achievements enable row level security;
 
 create policy "profiles readable by signed in users" on public.profiles for select to authenticated using (true);
 create policy "users update own profile" on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
@@ -138,6 +151,8 @@ create policy "users read own strength profile" on public.strength_profiles for 
 create policy "users create own strength profile" on public.strength_profiles for insert to authenticated with check (user_id = auth.uid());
 create policy "users update own strength profile" on public.strength_profiles for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "users delete own strength profile" on public.strength_profiles for delete to authenticated using (user_id = auth.uid());
+create policy "shared group strength achievements visible" on public.strength_achievements for select to authenticated using (user_id = auth.uid() or public.shares_group(auth.uid(), user_id));
+create policy "users create own strength achievements" on public.strength_achievements for insert to authenticated with check (user_id = auth.uid());
 
 insert into storage.buckets (id, name, public) values ('proof-photos', 'proof-photos', false) on conflict do nothing;
 create policy "upload own proof" on storage.objects for insert to authenticated with check (bucket_id = 'proof-photos' and (storage.foldername(name))[1] = auth.uid()::text);
