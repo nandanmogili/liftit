@@ -2,7 +2,7 @@
 
 Lift It is a phone-first social workout accountability app. Members log a Gym, Cardio, or Sports workout with a proof photo, build daily streaks, and work toward a shared weekly quota with their group.
 
-The core idea is deliberately simple: every valid workout counts as one, regardless of type or duration. Progress resets each Monday, while workout history and calendar statistics remain available for the current year.
+The core idea is deliberately simple: every valid workout counts as one, regardless of type or duration. Progress and the activity feed reset at 12:00 AM Monday Eastern Time, while workout history and calendar statistics remain available for the current year.
 
 ## Features
 
@@ -78,7 +78,7 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Supabase Row Level Security protects profiles, groups, memberships, workouts, reactions, and storage access
 - Proof photos are stored in a private Supabase Storage bucket
 - Proof photos are visible only to the owner and users who share a group with them
-- Photos from previous weeks become inaccessible when a new Monday begins
+- Previous-week posts leave the activity feed and their photos become inaccessible at 12:00 AM Monday Eastern Time
 - A protected Vercel cron endpoint permanently removes expired proof photos from storage
 - Profile pictures remain available until the owner replaces or removes them
 
@@ -146,6 +146,7 @@ For a new Supabase project, open the Supabase SQL Editor and run these files in 
 6. `supabase/group_settings.sql`
 7. `supabase/custom_reactions.sql`
 8. `supabase/weight_tracking.sql`
+9. `supabase/eastern_week_cleanup.sql`
 
 The first file creates the core tables, types, triggers, indexes, storage bucket, and baseline policies. The remaining files apply the production features added after the original schema and are intended to be run once on an existing Lift It project.
 
@@ -190,8 +191,8 @@ Proof photos follow a weekly privacy and cleanup flow:
 
 1. A workout image is compressed in the browser and uploaded to the private `proof-photos` bucket.
 2. Storage policies permit access only when the viewer owns the workout or shares a group with its author.
-3. At the start of a new week, policies prevent access to proof photos from earlier weeks.
-4. Every Monday at 08:00 UTC, Vercel calls `/api/cleanup-proof-photos`.
+3. At 12:00 AM Monday in `America/New_York`, earlier posts leave the feed and storage policies prevent access to their proof photos.
+4. Vercel calls `/api/cleanup-proof-photos` at both possible UTC equivalents of Eastern midnight so daylight saving time is handled correctly.
 5. The server uses the Supabase service-role key to remove expired files and records the deletion time in `workouts.proof_deleted_at`.
 
 Workout records remain in Postgres after their proof images expire, preserving yearly totals, calendar history, and statistics.
@@ -213,7 +214,11 @@ Vercel uses the included configuration:
   "crons": [
     {
       "path": "/api/cleanup-proof-photos",
-      "schedule": "0 8 * * 1"
+      "schedule": "0 4 * * 1"
+    },
+    {
+      "path": "/api/cleanup-proof-photos",
+      "schedule": "0 5 * * 1"
     }
   ]
 }
@@ -246,7 +251,7 @@ vercel.json                  Build and cron configuration
 
 ## Current product rules
 
-- A week runs Monday through Sunday.
+- A week runs Monday through Sunday and resets at 12:00 AM Monday in `America/New_York`.
 - Every workout type counts equally as one workout.
 - Duration and distance are not tracked.
 - A workout requires exactly one proof photo.

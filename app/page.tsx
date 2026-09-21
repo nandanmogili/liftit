@@ -29,7 +29,14 @@ const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() 
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join("") || "?";
 const titleCase = (value: string) => value ? value[0].toUpperCase() + value.slice(1) : value;
 const addDays = (date: Date, amount: number) => { const copy = new Date(date); copy.setDate(copy.getDate() + amount); return copy; };
-const weekStart = (date = new Date()) => { const copy = new Date(date); const offset = (copy.getDay() + 6) % 7; copy.setHours(0, 0, 0, 0); copy.setDate(copy.getDate() - offset); return copy; };
+const easternWeekStartKey = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "numeric", day: "numeric" }).formatToParts(date);
+  const value = (type: "year" | "month" | "day") => Number(parts.find(part => part.type === type)?.value);
+  const easternCalendarDate = new Date(Date.UTC(value("year"), value("month") - 1, value("day")));
+  const offset = (easternCalendarDate.getUTCDay() + 6) % 7;
+  easternCalendarDate.setUTCDate(easternCalendarDate.getUTCDate() - offset);
+  return easternCalendarDate.toISOString().slice(0, 10);
+};
 const friendlyDate = (date = new Date()) => date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 const relativeTime = (iso: string) => {
   const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
@@ -162,7 +169,7 @@ function HomeView({ username, avatarUrl, avatarPositionX, avatarPositionY, avata
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [reactingId, setReactingId] = useState<string | null>(null);
   const [reactionDetails, setReactionDetails] = useState<{ workoutId: string; emoji: Reaction["emoji"] } | null>(null);
-  const start = dateKey(weekStart());
+  const start = easternWeekStartKey();
   const weeklyCount = workouts.filter(workout => workout.workout_date >= start).length;
   const quota = groups.length ? Math.max(...groups.map(group => group.weekly_quota)) : null;
   const streak = calculateStreak(workouts).count;
@@ -467,6 +474,7 @@ export default function LiftItApp() {
   const [loading, setLoading] = useState(true);
   const [logOpen, setLogOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
+  const [, setClockTick] = useState(0);
 
   const refresh = useCallback(async (preferredGroupId?: string) => {
     if (!isSupabaseConfigured()) { window.location.href = "/login"; return; }
@@ -495,7 +503,7 @@ export default function LiftItApp() {
     const { data: profileRows } = await supabase.from("profiles").select("*").in("id", memberIds);
     const profilesWithAvatars = await addAvatarUrls((profileRows ?? []) as Profile[]);
     const profileMap = new Map<string, Profile>(profilesWithAvatars.map(item => [item.id, item])); setProfiles(profileMap); setGroups(groupList); setMemberships(membershipRows);
-    const memberSet = new Set(memberIds); const week = dateKey(weekStart()); const visible = ((visibleWorkouts ?? []) as Workout[]).filter(workout => memberSet.has(workout.user_id)); setGroupWorkouts(visible);
+    const memberSet = new Set(memberIds); const week = easternWeekStartKey(); const visible = ((visibleWorkouts ?? []) as Workout[]).filter(workout => memberSet.has(workout.user_id)); setGroupWorkouts(visible);
     const recent = visible.filter(workout => workout.workout_date >= week).slice(0, 20); const paths = recent.map(workout => workout.proof_path);
     if (paths.length) { const { data: signed } = await supabase.storage.from("proof-photos").createSignedUrls(paths, 3600); const urlMap = new Map((signed ?? []).map(item => [item.path, item.signedUrl ?? undefined])); recent.forEach(workout => { workout.proof_url = urlMap.get(workout.proof_path); }); }
     const recentIds = recent.map(workout => workout.id);
@@ -505,12 +513,13 @@ export default function LiftItApp() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
-  const selectedGroup = groups.find(group => group.id === selectedGroupId) ?? groups[0]; const weeklyStart = dateKey(weekStart());
+  useEffect(() => { const timer = window.setInterval(() => setClockTick(value => value + 1), 60_000); return () => window.clearInterval(timer); }, []);
+  const selectedGroup = groups.find(group => group.id === selectedGroupId) ?? groups[0]; const weeklyStart = easternWeekStartKey();
   const memberProgress = useMemo<MemberProgress[]>(() => { if (!selectedGroup) return []; const groupMembers = memberships.filter(row => row.group_id === selectedGroup.id); return groupMembers.map(row => ({ profile: profiles.get(row.user_id) ?? { id: row.user_id, username: "Member", avatar_path: null, avatar_position_x: 50, avatar_position_y: 50, avatar_zoom: 100, created_at: row.joined_at }, role: row.role, count: groupWorkouts.filter(workout => workout.user_id === row.user_id && workout.workout_date >= weeklyStart).length })).sort((a, b) => b.count - a.count || a.profile.username.localeCompare(b.profile.username)); }, [selectedGroup, memberships, profiles, groupWorkouts, weeklyStart]);
   if (loading || !profile) return <main className="grid min-h-screen place-items-center bg-ink text-lime"><Loader2 className="size-7 animate-spin" /></main>;
   const pageTitle = titleCase(view); const streak = calculateStreak(workouts).count;
   return <main className="min-h-screen bg-ink text-white"><div className="mx-auto flex min-h-screen max-w-[1180px]"><DesktopNav view={view} setView={setView} onLog={() => setLogOpen(true)} groupCount={groups.length} /><div className="min-w-0 flex-1"><div className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-white/8 bg-ink/88 px-5 backdrop-blur-xl md:hidden"><Brand /><span className="text-xs font-bold uppercase tracking-[.13em] text-white/35">{pageTitle}</span></div><div className="mx-auto w-full max-w-[720px] px-4 pb-28 pt-7 sm:px-7 md:pb-16 md:pt-10">
-{view === "home" && <HomeView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} workouts={workouts} groups={groups} feed={feed} profiles={profiles} reactions={reactions} onProfile={() => setView("profile")} onGroups={() => setView("groups")} onDeleted={() => refresh(selectedGroupId ?? undefined)} onReactionChanged={() => refresh(selectedGroupId ?? undefined)} />}
+{view === "home" && <HomeView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} workouts={workouts} groups={groups} feed={feed.filter(workout => workout.workout_date >= weeklyStart)} profiles={profiles} reactions={reactions} onProfile={() => setView("profile")} onGroups={() => setView("groups")} onDeleted={() => refresh(selectedGroupId ?? undefined)} onReactionChanged={() => refresh(selectedGroupId ?? undefined)} />}
 {view === "calendar" && <CalendarView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} workouts={workouts} onProfile={() => setView("profile")} />}
 {view === "groups" && <GroupsView username={profile.username} avatarUrl={profile.avatar_url} avatarPositionX={profile.avatar_position_x} avatarPositionY={profile.avatar_position_y} avatarZoom={profile.avatar_zoom} currentUserId={profile.id} groups={groups} selectedId={selectedGroupId} setSelectedId={setSelectedGroupId} members={memberProgress} workouts={groupWorkouts} onProfile={() => setView("profile")} onManage={() => setGroupOpen(true)} onChanged={() => refresh()} />}
 {view === "profile" && <ProfileView profile={profile} workoutCount={workouts.length} streak={streak} groupCount={groups.length} onChanged={() => refresh(selectedGroupId ?? undefined)} />}</div></div></div><AppNav view={view} setView={setView} onLog={() => setLogOpen(true)} /><LogDialog open={logOpen} onOpenChange={setLogOpen} onLogged={() => refresh(selectedGroupId ?? undefined)} /><GroupDialog open={groupOpen} onOpenChange={setGroupOpen} discoverGroups={discoverGroups.filter(group => !groups.some(own => own.id === group.id))} onChanged={refresh} /></main>;

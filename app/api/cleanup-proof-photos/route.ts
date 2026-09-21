@@ -3,12 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function mondayDateKey() {
-  const now = new Date();
-  const day = now.getUTCDay();
-  const offset = (day + 6) % 7;
-  now.setUTCDate(now.getUTCDate() - offset);
-  return now.toISOString().slice(0, 10);
+function easternMondayDateKey() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "numeric", day: "numeric" }).formatToParts(new Date());
+  const value = (type: "year" | "month" | "day") => Number(parts.find(part => part.type === type)?.value);
+  const easternCalendarDate = new Date(Date.UTC(value("year"), value("month") - 1, value("day")));
+  const offset = (easternCalendarDate.getUTCDay() + 6) % 7;
+  easternCalendarDate.setUTCDate(easternCalendarDate.getUTCDate() - offset);
+  return easternCalendarDate.toISOString().slice(0, 10);
 }
 
 export async function GET(request: Request) {
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const cutoff = mondayDateKey();
+  const cutoff = easternMondayDateKey();
   const { data: expired, error: queryError } = await supabase
     .from("workouts")
     .select("id,proof_path")
@@ -50,4 +51,3 @@ export async function GET(request: Request) {
 
   return Response.json({ deleted: paths.length, cutoff });
 }
-

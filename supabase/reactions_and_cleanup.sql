@@ -38,8 +38,8 @@ create policy "users delete own reaction" on public.reactions
 for delete to authenticated
 using (user_id = auth.uid());
 
--- Old proof photos become unreadable as soon as the new Monday begins,
--- even if the scheduled physical deletion runs later that morning.
+-- Old proof photos become unreadable at 12:00 AM Monday in New York,
+-- even if the scheduled physical deletion runs shortly afterward.
 drop policy if exists "shared members read proof" on storage.objects;
 create policy "shared members read proof" on storage.objects
 for select to authenticated
@@ -49,7 +49,7 @@ using (
     select 1 from public.workouts w
     where w.proof_path = name
       and w.proof_deleted_at is null
-      and w.workout_date >= date_trunc('week', current_date)::date
+      and w.workout_date >= date_trunc('week', now() at time zone 'America/New_York')::date
       and (w.user_id = auth.uid() or public.shares_group(auth.uid(), w.user_id))
   )
 );
