@@ -76,6 +76,16 @@ The core idea is deliberately simple: every valid workout counts as one, regardl
 - Hover across the graph for the same inspection behavior on desktop
 - Weight data is never shown in groups, profiles viewed by others, or the activity feed
 
+### Optional strength tracking
+
+- Private, opt-in strength balance tool on the Profile page
+- Saves only the latest entry for each lift; it does not create strength history
+- Every field is optional and unfilled muscle regions remain gray
+- Benchmarks: incline dumbbell press, triceps pushdown, overhead press, incline curl, seated cable row, lat pulldown, leg extension, leg curl, hip thrust, calf raise, and cable crunch
+- All entries assume 3 sets of 8–10 reps, with pounds and kilograms supported
+- A front-and-back body diagram uses Needs Work, Developing, Balanced, Strong, and Dominant colors to estimate balance across the lifts entered
+- Strength data is never shown in groups, public profiles, workouts, or the activity feed
+
 ### Privacy and cleanup
 
 - Supabase Row Level Security protects profiles, groups, memberships, workouts, reactions, and storage access
@@ -151,6 +161,7 @@ For a new Supabase project, open the Supabase SQL Editor and run these files in 
 8. `supabase/weight_tracking.sql`
 9. `supabase/eastern_week_cleanup.sql`
 10. `supabase/profile_settings.sql`
+11. `supabase/strength_tracking.sql`
 
 The first file creates the core tables, types, triggers, indexes, storage bucket, and baseline policies. The remaining files apply the production features added after the original schema and are intended to be run once on an existing Lift It project.
 
